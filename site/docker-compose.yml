@@ -1,5 +1,5 @@
 # Dokploy (Docker Compose type). Traefik routing is attached by Dokploy from the
-# Domains tab (service: web, port: 80), so no host ports are published here.
+# Domains tab (service: web, port: 3011), so no host ports are published here.
 services:
   web:
     build:
@@ -7,11 +7,11 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     expose:
-      - "80"
+      - "3011"
     networks:
       - dokploy-network
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3011/"]
       interval: 30s
       timeout: 3s
       retries: 3

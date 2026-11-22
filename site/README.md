@@ -56,7 +56,7 @@ The image is small, has no database, and publishes no host ports; Dokploy's Trae
 4. **Compose Path**: `./docker-compose.yml` if `site/` is the root of the repository,
    or `./site/docker-compose.yml` if the repository is the whole project
 5. **Compose Type**: Docker Compose
-6. **Domains** tab → Add Domain: Service Name = `web`, Port = `80`, enter your domain and enable HTTPS (Let's Encrypt)
+6. **Domains** tab → Add Domain: Service Name = `web`, Port = `3011`, enter your domain and enable HTTPS (Let's Encrypt)
 7. Click **Deploy**
 
 Notes
@@ -69,10 +69,10 @@ Try the image locally (requires Docker):
 
 ```
 docker build -t sales-site ./site
-docker run --rm -p 8080:80 sales-site
+docker run --rm -p 3011:3011 sales-site
 ```
 
-Then open http://localhost:8080
+Then open http://localhost:3011
 
 ## Updating the numbers
 
