@@ -1,0 +1,25 @@
+# Python environments and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+
+# Kaggle data: train.csv is ~122 MB, over GitHub's 100 MB file limit.
+# Download the competition files into Dataset/ (see README).
+Dataset/
+
+# Training artefacts and logs
+catboost_info/
+*.log
+
+# Editors, OS and tool folders
+.vscode/
+.idea/
+.claude/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Throw-away test pages for the website
+site/_*.html

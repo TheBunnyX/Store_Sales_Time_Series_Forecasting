@@ -1,0 +1,443 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Store Sales Forecasting Explained</title>
+<meta name="description" content="A plain-language walk-through of forecasting 16 days of grocery sales: the steps, why each choice was made, how LightGBM, XGBoost, CatBoost, Random Forest and LSTM compare, an FAQ, a glossary and the technical details.">
+<meta property="og:title" content="Store Sales Forecasting Explained">
+<meta property="og:description" content="Step by step: how 16-day store sales forecasts were built, why, and how five algorithms compare.">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232a78d6'/%3E%3Cpath d='M6 22l6-7 5 4 9-11' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+Thai:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<a class="skip" href="#main" data-i18n="skip">Skip to content</a>
+
+<nav class="nav" aria-label="Page sections" data-i18n-aria="nav.aria">
+  <div class="nav-in">
+    <a class="brand" href="#overview">Store Sales</a>
+    <div class="links" id="navLinks">
+      <a href="#overview" data-i18n="nav.overview">Overview</a>
+      <a href="#steps" data-i18n="nav.steps">Step by step</a>
+      <a href="#data" data-i18n="nav.data">Data</a>
+      <a href="#results" data-i18n="nav.results">Results</a>
+      <a href="#models" data-i18n="nav.models">Models</a>
+      <a href="#why" data-i18n="nav.why">Why this method</a>
+      <a href="#faq" data-i18n="nav.faq">FAQ &amp; glossary</a>
+      <a href="#technical" data-i18n="nav.tech">Technical details</a>
+    </div>
+    <div class="lang" role="group" aria-label="Language / ภาษา">
+      <button id="langEn" type="button" lang="en" aria-pressed="true">EN</button>
+      <button id="langTh" type="button" lang="th" aria-pressed="false">ไทย</button>
+    </div>
+    <button id="themeBtn" class="themebtn" type="button"></button>
+  </div>
+</nav>
+
+<main class="wrap" id="main">
+
+<!-- ============================ OVERVIEW ============================ -->
+<header id="overview" class="sec" style="gap:18px">
+  <div class="eyebrow">Store Sales · Time Series Forecasting</div>
+  <h1 data-i18n="ov.h1">Predicting the next 16 days of grocery sales, explained step by step</h1>
+  <p class="lead" data-i18n="ov.lead">A grocery chain wants to know how many units of each product every store will sell over the next two weeks, so it can stock the shelves
+  without wasting food or running out. This page shows how we built that forecast, why each choice was made, and how five different algorithms compared.
+  No machine-learning background needed: hard words are explained in the <a class="link" href="#glossary">glossary</a>.</p>
+
+  <div class="head">
+    <div class="hero">
+      <div class="eyebrow" data-i18n="ov.best">Best score (RMSLE, lower is better)</div>
+      <div class="num" id="heroNum">0.382</div>
+      <div class="cap" data-i18n="ov.cap">Average of two LightGBM models. The starting point scored <b id="f1">0.388</b>, an improvement of <b id="f2">0.006</b>.</div>
+    </div>
+    <div class="facts">
+      <div class="fact" data-i18n="ov.f1"><b>1,782</b><span>store × product series to forecast</span></div>
+      <div class="fact" data-i18n="ov.f2"><b>16 days</b><span>ahead, 2017-08-16 to 2017-08-31</span></div>
+      <div class="fact" data-i18n="ov.f3"><b>5</b><span>algorithm families compared</span></div>
+    </div>
+  </div>
+
+  <div class="take">
+    <h2 data-i18n="take.h">Three things to take away</h2>
+    <ol>
+      <li data-i18n="take.1"><b>The best forecast came from combining two similar models.</b> Averaging a tuned LightGBM with a LightGBM trained separately for each forecast day scored 0.382.</li>
+      <li data-i18n="take.2"><b>Cleaning the data helped more than fancier algorithms.</b> Removing the zeros recorded before a store or product started selling was the single biggest gain (see <a class="link" href="#steps">step 6</a>).</li>
+      <li data-i18n="take.3"><b>The neural network (LSTM) did not win.</b> Tree-based models were clearly better here, and adding the LSTM to the average made the result worse.</li>
+    </ol>
+  </div>
+
+  <div class="guide">
+    <b data-i18n="guide.b">Where to start</b>
+    <ul>
+      <li data-i18n="guide.1">Want the story? Read <a class="link" href="#steps">Step by step</a>, then <a class="link" href="#why">Why this method</a>.</li>
+      <li data-i18n="guide.2">Want the numbers? Go to <a class="link" href="#results">Results</a> and <a class="link" href="#models">Models</a>.</li>
+      <li data-i18n="guide.3">Confused by a term? Check the <a class="link" href="#faq">FAQ &amp; glossary</a>.</li>
+      <li data-i18n="guide.4">Want to rebuild it? Open <a class="link" href="#technical">Technical details</a>.</li>
+    </ul>
+  </div>
+</header>
+
+<!-- ============================ STEP BY STEP ============================ -->
+<section id="steps" class="sec" aria-labelledby="h-steps">
+  <div class="eyebrow" data-i18n="st.eyebrow">Step by step</div>
+  <h2 id="h-steps" data-i18n="st.h">How the forecast was built</h2>
+  <p class="lead small" data-i18n="st.lead">Eight steps, in the order they happened. Each one says what we did and what we learned.</p>
+  <ol class="stepper">
+    <li class="st">
+      <div class="st-n" aria-hidden="true">1</div>
+      <div class="st-b">
+        <h3 data-i18n="st.1.h">Understand the problem</h3>
+        <dl>
+          <dt data-i18n="dt.did">What we did</dt><dd data-i18n="st.1.did">Read the competition rules. We must predict daily unit sales for every store × product family for the 16 days after the training data ends. Forecasts are scored with RMSLE.</dd>
+          <dt data-i18n="dt.learn">What we learned</dt><dd data-i18n="st.1.learn">There are 54 stores × 33 product families = 1,782 separate sales histories ("series"), with 3,000,888 daily records from 2013-01-01 to 2017-08-15. RMSLE rewards getting proportions right, so slow-selling products count as much as big sellers.</dd>
+        </dl>
+      </div>
+    </li>
+    <li class="st">
+      <div class="st-n" aria-hidden="true">2</div>
+      <div class="st-b">
+        <h3 data-i18n="st.2.h">Explore the data</h3>
+        <dl>
+          <dt data-i18n="dt.did">What we did</dt><dd data-i18n="st.2.did">Plotted sales by weekday, month and year, looked at promotions, holidays, the oil price and the file of daily transactions.</dd>
+          <dt data-i18n="dt.learn">What we learned</dt><dd data-i18n="st.2.learn">Sales follow a weekly rhythm (Saturday and Sunday are highest) and grow over the years. Promotions raise sales. 31% of the records are zero, and about half of those zeros come from before a product or store began selling. Christmas Day is missing every year, and the transactions file stops on the last training day, so it cannot be used.</dd>
+        </dl>
+        <a class="link" href="#data" data-i18n="st.2.link">See the data →</a>
+      </div>
+    </li>
+    <li class="st">
+      <div class="st-n" aria-hidden="true">3</div>
+      <div class="st-b">
+        <h3 data-i18n="st.3.h">Prepare the target</h3>
+        <dl>
+          <dt data-i18n="dt.did">What we did</dt><dd data-i18n="st.3.did">Trained on log(1 + sales) instead of raw sales, then converted predictions back.</dd>
+          <dt data-i18n="dt.learn">What we learned</dt><dd data-i18n="st.3.learn">Raw sales are extremely lopsided (a few huge values; skewness 7.4). After the log it is mild (0.41). The score is computed on this log scale too, so training on it directly optimises what is measured.</dd>
+        </dl>
+      </div>
+    </li>
+    <li class="st">
+      <div class="st-n" aria-hidden="true">4</div>
+      <div class="st-b">
+        <h3 data-i18n="st.4.h">Set up a fair test</h3>
+        <dl>
+          <dt data-i18n="dt.did">What we did</dt><dd data-i18n="st.4.did">Hid the last 16 days of the training data (2017-07-31 to 2017-08-15) and used them as an exam. Every model learns only from earlier days, and every "memory" feature (sales a few weeks ago) looks back at least 16 days, so nothing is peeked at.</dd>
+          <dt data-i18n="dt.learn">What we learned</dt><dd data-i18n="st.4.learn">All numbers on this page are measured on the same 16 days, so models can be compared directly. The catch: it is only one window, so small differences should not be over-read.</dd>
+        </dl>
+      </div>
+    </li>
+    <li class="st">
+      <div class="st-n" aria-hidden="true">5</div>
+      <div class="st-b">
+        <h3 data-i18n="st.5.h">Build a baseline</h3>
+        <dl>
+          <dt data-i18n="dt.did">What we did</dt><dd data-i18n="st.5.did">Trained a first LightGBM model with calendar, promotion, holiday, oil price, store information and "sales N days ago" features.</dd>
+          <dt data-i18n="dt.learn">What we learned</dt><dd data-i18n="st.5.learn">It scored <b>0.388</b>. This is the yardstick: every later idea must beat it.</dd>
+        </dl>
+        <span class="chip-note" data-i18n="st.5.chip">Baseline: 0.388</span>
+      </div>
+    </li>
+    <li class="st">
+      <div class="st-n" aria-hidden="true">6</div>
+      <div class="st-b">
+        <h3 data-i18n="st.6.h">Fix the data and the features</h3>
+        <dl>
+          <dt data-i18n="dt.did">What we did</dt><dd data-i18n="st.6.did">Tried three ideas: (a) drop the zeros recorded before a series started selling, (b) add richer holiday features, (c) train a separate model for each forecast day.</dd>
+          <dt data-i18n="dt.learn">What we learned</dt><dd data-i18n="st.6.learn">(a) helped the most: 0.390 → 0.386. (b) did not help, so we dropped it. (c) was better on nearby days but worse on far days, so it became an ingredient for step 8 rather than a replacement.</dd>
+        </dl>
+        <a class="link" href="#results" data-i18n="st.6.link">See what helped →</a>
+      </div>
+    </li>
+    <li class="st">
+      <div class="st-n" aria-hidden="true">7</div>
+      <div class="st-b">
+        <h3 data-i18n="st.7.h">Compare algorithms and tune them</h3>
+        <dl>
+          <dt data-i18n="dt.did">What we did</dt><dd data-i18n="st.7.did">Trained LightGBM, XGBoost, CatBoost, Random Forest and an LSTM neural network, then searched for better settings ("tuning") for the four tree-based ones.</dd>
+          <dt data-i18n="dt.learn">What we learned</dt><dd data-i18n="st.7.learn">Gradient-boosted trees beat the rest. Tuning moved each algorithm by only about 0.002–0.003 in the search, so the defaults were already close to the best.</dd>
+        </dl>
+        <a class="link" href="#models" data-i18n="st.7.link">Meet the models →</a>
+      </div>
+    </li>
+    <li class="st">
+      <div class="st-n" aria-hidden="true">8</div>
+      <div class="st-b">
+        <h3 data-i18n="st.8.h">Combine and double-check</h3>
+        <dl>
+          <dt data-i18n="dt.did">What we did</dt><dd data-i18n="st.8.did">Averaged the tuned LightGBM with the per-forecast-day LightGBM (equal weights, in log space), then reviewed the caveats.</dd>
+          <dt data-i18n="dt.learn">What we learned</dt><dd data-i18n="st.8.learn">The average scored <b>0.382</b>, better than either model alone. Adding XGBoost, CatBoost, Random Forest or the LSTM did not help, because their forecasts are almost the same as LightGBM's.</dd>
+        </dl>
+        <span class="chip-note" data-i18n="st.8.chip">Final: 0.382</span>
+      </div>
+    </li>
+  </ol>
+</section>
+
+<!-- ============================ THE DATA ============================ -->
+<section id="data" class="sec" aria-labelledby="h-data">
+  <div class="eyebrow" data-i18n="da.eyebrow">The data</div>
+  <h2 id="h-data" data-i18n="da.h">What the sales data looks like</h2>
+  <p class="lead small" data-i18n="da.lead">Four patterns from the exploration that shaped the model. All figures come from the training data; the full analysis is in the project's <code>EDA.ipynb</code> notebook.</p>
+  <div class="grid2">
+    <div class="panel">
+      <h3 data-i18n="da.1.h">1. Weekends sell the most</h3>
+      <p class="small muted" data-i18n="da.1.p">Average total sales per day, all stores and products, by weekday.</p>
+      <div class="bars" id="dWeekday"></div>
+    </div>
+    <div class="panel">
+      <h3 data-i18n="da.2.h">2. Sales keep growing</h3>
+      <p class="small muted" data-i18n="da.2.p">Average total sales per day, by year (2013 is a full year, 2017 stops in August).</p>
+      <div class="bars" id="dYear"></div>
+    </div>
+    <div class="panel">
+      <h3 data-i18n="da.3.h">3. Promotions lift sales</h3>
+      <p class="small muted" data-i18n="da.3.p">Average units sold per store-product-day, by number of items on promotion. Big sellers are promoted more often, so this is not purely cause and effect.</p>
+      <div class="bars" id="dPromo"></div>
+    </div>
+    <div class="panel">
+      <h3 data-i18n="da.4.h">4. Half of all zeros are not real demand</h3>
+      <p class="small muted" data-i18n="da.4.p">31% of records are zero. Of those zeros:</p>
+      <div class="seg" id="dZeros" role="img"></div>
+      <ul class="legend" id="dZerosLegend"></ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ RESULTS ============================ -->
+<section id="results" class="sec" aria-labelledby="h-results">
+  <div class="eyebrow" data-i18n="re.eyebrow">Results</div>
+  <h2 id="h-results" data-i18n="re.h">Which model is best, and what actually helped?</h2>
+  <p class="lead small" data-i18n="re.lead">Hover or focus a row for details. Charts that do not start at zero say so, because the differences between models are small.</p>
+
+  <div class="block" aria-labelledby="h-rank">
+    <h3 id="h-rank" data-i18n="rk.h">Model ranking</h3>
+    <p class="muted small" data-i18n="rk.p">Each dot is the score on the validation window; the axis is cut at 0.37–0.43 so the gaps are visible (it does not start at 0). The black line is the baseline LightGBM at 0.388. Dots to the left of it are better.</p>
+    <div class="panel">
+      <div class="rows" id="rank" role="list"></div>
+      <div class="axis"><div></div><div class="ticks" id="rankTicks"></div><div></div></div>
+      <div class="reflabel"><i></i> <span data-i18n="rk.ref">Untuned baseline LightGBM (0.388)</span></div>
+    </div>
+    <p class="callout" data-i18n="rk.call"><b>In plain words:</b> the tree-based models cluster at the front; the neural network is last. The gap between first and second place is small, but both beat the starting point.</p>
+  </div>
+
+  <div class="block" aria-labelledby="h-help">
+    <h3 id="h-help" data-i18n="hp.h">What actually helped</h3>
+    <p class="muted small" data-i18n="hp.p">Bar length is how much the score improved at each step, in the order the steps were tried (longer is better). The size of a step depends on what was done before it.</p>
+    <div class="panel"><div class="steps" id="steps-chart"></div></div>
+    <p class="callout" data-i18n="hp.call"><b>In plain words:</b> cleaning the data gained more than all the tuning combined. A grey bar means the idea did not help and was dropped.</p>
+  </div>
+
+  <div class="block" aria-labelledby="h-hz">
+    <h3 id="h-hz" data-i18n="hz.h">The further out, the harder</h3>
+    <p class="muted small" data-i18n="hz.p">The x-axis is the forecast day (1–16 after the last training date); the y-axis is the score for that day (not starting at 0). Click a model name to show or hide it. Hover the chart, or use the left and right arrow keys, to read values.</p>
+    <div class="panel">
+      <div class="chips" id="chips" role="group" aria-label="Choose which models to show" data-i18n-aria="hz.aria.chips"></div>
+      <div id="line" tabindex="0" aria-label="Line chart of the score by forecast day, 1 to 16" data-i18n-aria="hz.aria.line"></div>
+      <p class="small muted" id="hzNote" style="margin-top:8px"></p>
+    </div>
+    <p class="callout" data-i18n="hz.call"><b>In plain words:</b> predicting tomorrow is easier than predicting two weeks out, because the most recent sales are older by then. That is why the separate per-day models help on the nearest days.</p>
+  </div>
+
+  <div class="block" aria-labelledby="h-tune">
+    <h3 id="h-tune" data-i18n="tn.h">How much does tuning help?</h3>
+    <p class="muted small" data-i18n="tn.p">Every row uses the same features and validation window. The dark tick is the default setting, the coloured dot is the best setting found, and the faint band runs from best to worst setting tried. The search used a high learning rate for speed.</p>
+    <div class="panel">
+      <div class="rows" id="tune"></div>
+      <div class="axis"><div></div><div class="ticks" id="tuneTicks"></div><div></div></div>
+    </div>
+    <p class="callout" data-i18n="tn.call"><b>In plain words:</b> "tuning" means trying different settings of the algorithm. Here it moved scores only a little, so the algorithm's defaults were already sensible.</p>
+  </div>
+
+  <div class="block" aria-labelledby="h-blend">
+    <h3 id="h-blend" data-i18n="bl.h">Does averaging several models help?</h3>
+    <p class="muted small" data-i18n="bl.p">Predictions are averaged in log space with equal weights. The black line is tuned LightGBM alone; combinations to the left of it beat using a single model.</p>
+    <div class="panel">
+      <div class="rows" id="blend"></div>
+      <div class="axis"><div></div><div class="ticks" id="blendTicks"></div><div></div></div>
+      <div class="reflabel"><i></i> <span data-i18n="bl.ref">Tuned LightGBM alone (0.385)</span></div>
+    </div>
+    <p class="callout" data-i18n="bl.call"><b>In plain words:</b> averaging only helps when the models disagree in useful ways. The two LightGBM variants do; XGBoost, CatBoost and the LSTM mostly repeat what LightGBM already says. ("LGB s1" and "LGB s2" are the leading-zero-trim and richer-holiday variants; see <a class="link" href="#technical">Technical details → Experiments</a>.)</p>
+  </div>
+</section>
+
+<!-- ============================ THE MODELS ============================ -->
+<section id="models" class="sec" aria-labelledby="h-models">
+  <div class="eyebrow" data-i18n="mo.eyebrow">The models</div>
+  <h2 id="h-models" data-i18n="mo.h">How each algorithm works</h2>
+  <p class="lead small" data-i18n="mo.lead">Each card says, in simple terms, how the algorithm makes a prediction, where it is strong or weak, and the best settings found.</p>
+  <div class="cards" id="cards"></div>
+</section>
+
+<!-- ============================ WHY THIS METHOD ============================ -->
+<section id="why" class="sec" aria-labelledby="h-why">
+  <div class="eyebrow" data-i18n="wy.eyebrow">Why this method</div>
+  <h2 id="h-why" data-i18n="wy.h">The reasoning behind each choice</h2>
+  <p class="lead small" data-i18n="wy.lead">Every decision, why we made it, and the evidence we have. "Evidence" means a number measured in this project, not a general belief.</p>
+  <div class="tw">
+    <table class="why">
+      <thead><tr><th data-i18n="wy.th1">Decision</th><th data-i18n="wy.th2">Why</th><th data-i18n="wy.th3">Evidence</th></tr></thead>
+      <tbody>
+        <tr><td data-i18n="wy.1.a">Train on log(1 + sales)</td><td data-i18n="wy.1.b">The score is measured on that scale, and raw sales are very lopsided.</td><td data-i18n="wy.1.c">Skewness 7.4 raw → 0.41 after the log</td></tr>
+        <tr><td data-i18n="wy.2.a">Test on the last 16 days</td><td data-i18n="wy.2.b">It copies the real task: forecast the 16 days after the data ends, using only the past.</td><td data-i18n="wy.2.c">Every number here uses the same 16 days</td></tr>
+        <tr><td data-i18n="wy.3.a">Use history that is at least 16 days old</td><td data-i18n="wy.3.b">When forecasting 16 days ahead, the most recent days do not exist yet. Using them would be cheating (data leakage) and would not work in real use.</td><td data-i18n="wy.3.c">Design rule, checked in the code</td></tr>
+        <tr><td data-i18n="wy.4.a">Include same-weekday history (21, 28, 35 days back)</td><td data-i18n="wy.4.b">Sales repeat weekly, so the same weekday is the best guide.</td><td data-i18n="wy.4.c">Daily totals correlate 0.83 with 7 days earlier but only 0.51 with 16 days earlier</td></tr>
+        <tr><td data-i18n="wy.5.a">Use gradient-boosted trees as the main model</td><td data-i18n="wy.5.b">The data is a table of many mixed columns with gaps. Trees handle that well and train quickly.</td><td data-i18n="wy.5.c">LightGBM 0.385 vs Random Forest 0.407 vs LSTM 0.423</td></tr>
+        <tr><td data-i18n="wy.6.a">Drop zeros recorded before a series starts selling</td><td data-i18n="wy.6.b">Those zeros mean "not open yet", not "no demand", and they distort the history features.</td><td data-i18n="wy.6.c">Score 0.390 → 0.386; 49.7% of all zeros are of this kind</td></tr>
+        <tr><td data-i18n="wy.7.a">Also train one model per forecast day</td><td data-i18n="wy.7.b">A model for day 1 can use sales from yesterday; a model for day 16 cannot.</td><td data-i18n="wy.7.c">Day 1 score 0.385 vs 0.392 for the single model, but worse on day 16</td></tr>
+        <tr><td data-i18n="wy.8.a">Average the two LightGBM variants</td><td data-i18n="wy.8.b">One is better near, the other far, so their mistakes differ.</td><td data-i18n="wy.8.c">0.385 and 0.387 alone → 0.382 averaged</td></tr>
+        <tr><td data-i18n="wy.9.a">Use equal weights, not fitted weights</td><td data-i18n="wy.9.b">With a single 16-day window, fitting weights would just memorise that window.</td><td data-i18n="wy.9.c">Fewer choices made after seeing the results</td></tr>
+        <tr><td data-i18n="wy.10.a">Do not average in XGBoost, CatBoost or the LSTM</td><td data-i18n="wy.10.b">Their predictions are almost copies of LightGBM's, so they add noise rather than information.</td><td data-i18n="wy.10.c">Correlation with LightGBM 0.997–0.999; blends with them scored worse</td></tr>
+        <tr><td data-i18n="wy.11.a">Skip the transactions file</td><td data-i18n="wy.11.b">It stops on the last training day, so it is unknown for the days we must forecast.</td><td data-i18n="wy.11.c">Transactions end 2017-08-15; the forecast starts 2017-08-16</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="note">
+    <b data-i18n="wy.note.b">What we deliberately did not do</b>
+    <ul>
+      <li data-i18n="wy.note.1">We did not tune anything on the 16 days we must forecast; they have no answers.</li>
+      <li data-i18n="wy.note.2">We did not claim a leaderboard rank. This page only knows our own validation window.</li>
+      <li data-i18n="wy.note.3">We kept ideas that failed in the write-up (richer holidays, store-level features, a Ridge hybrid) so the results are not cherry-picked.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ============================ FAQ & GLOSSARY ============================ -->
+<section id="faq" class="sec" aria-labelledby="h-faq">
+  <div class="eyebrow" data-i18n="fq.eyebrow">FAQ &amp; glossary</div>
+  <h2 id="h-faq" data-i18n="fq.h">Frequently asked questions</h2>
+  <div class="faq">
+    <details><summary data-i18n="fq.1.q">What exactly is being predicted?</summary>
+      <p data-i18n="fq.1.a">For each of 54 stores and each of 33 product families (for example "BREAD/BAKERY" or "BEVERAGES"), the number of units sold on each of the 16 days from 2017-08-16 to 2017-08-31. That is 28,512 numbers.</p></details>
+    <details><summary data-i18n="fq.2.q">What does a score of 0.382 mean?</summary>
+      <p data-i18n="fq.2.a">RMSLE is the typical size of the miss measured on log(1 + sales). A rough reading: e<sup>0.382</sup> ≈ 1.47, so a typical single store-product-day forecast is off by a factor of around 1.5 in relative terms. Single days are noisy, so this says nothing about how accurate monthly totals would be. Lower is better and 0 would be perfect.</p></details>
+    <details><summary data-i18n="fq.3.q">Is 0.382 good?</summary>
+      <p data-i18n="fq.3.a">We can only say it is better than our own starting point (0.388) on this validation window. We cannot say how it ranks on the Kaggle leaderboard, which uses different days and hidden answers. The improvement over the baseline is small and comes from one window.</p></details>
+    <details><summary data-i18n="fq.4.q">Why does the error grow with the forecast day?</summary>
+      <p data-i18n="fq.4.a">The further ahead you forecast, the older the latest information. For day 16 the newest sales the model may use are 16 days old. LightGBM's average score is about 0.380 on days 1–4 and about 0.399 on days 13–16.</p></details>
+    <details><summary data-i18n="fq.5.q">Why not use the most advanced model, such as deep learning?</summary>
+      <p data-i18n="fq.5.a">We did try one: an LSTM neural network. It scored 0.423, the worst of the five, and averaging it with LightGBM made the result worse. It was not tuned, so a better LSTM is possible, but for tables with strong "sales N days ago" columns, tree-based models were the better fit here.</p></details>
+    <details><summary data-i18n="fq.6.q">Doesn't dropping zeros ignore real zero-sales days?</summary>
+      <p data-i18n="fq.6.a">No. Only zeros <em>before</em> a store or product first sold anything are dropped (they mean "not open yet"). Zeros after that are kept, because they are real demand of zero.</p></details>
+    <details><summary data-i18n="fq.7.q">Why average two models instead of using the best one?</summary>
+      <p data-i18n="fq.7.a">The single model and the per-day models make different mistakes: the per-day models are better on day 1 and the single model is better on day 16. Averaging cancels part of each one's errors, which is why 0.382 beats both 0.385 and 0.387.</p></details>
+    <details><summary data-i18n="fq.8.q">Why did richer holiday features not help?</summary>
+      <p data-i18n="fq.8.a">The basic holiday and calendar features already capture most of the effect, so the extra detail (bridge days, work days, distance to a holiday) mostly added noise. The score moved from 0.38571 to 0.38595, which is a tiny loss.</p></details>
+    <details><summary data-i18n="fq.9.q">Why do the lines in the "error by forecast day" chart zigzag?</summary>
+      <p data-i18n="fq.9.a">Each point is measured on a single day (1,782 store-product records), not an average over many days, so individual days that are unusually hard or easy show up as bumps. It is not a smoothed trend.</p></details>
+    <details><summary data-i18n="fq.10.q">Can I trust these numbers?</summary>
+      <p data-i18n="fq.10.a">Treat them as a fair comparison, not a guarantee. All scores come from one 16-day window; the best blend was picked after looking at 11 combinations; CatBoost on the GPU gives slightly different results between runs. See <a class="link" href="#technical">Technical details → Limitations</a>.</p></details>
+    <details><summary data-i18n="fq.11.q">Which models run on a GPU?</summary>
+      <p data-i18n="fq.11.a">XGBoost, CatBoost and the LSTM. LightGBM and Random Forest run on the CPU: the standard pip build of LightGBM has no GPU support.</p></details>
+    <details><summary data-i18n="fq.12.q">How do I run it myself?</summary>
+      <p data-i18n="fq.12.a">The commands are in <a class="link" href="#technical">Technical details → How to run</a>.</p></details>
+  </div>
+
+  <h2 id="glossary" style="margin-top:12px" data-i18n="gl.h">Glossary</h2>
+  <div class="gsearch">
+    <label for="glossSearch" class="small muted" data-i18n="gl.label">Filter terms</label>
+    <input id="glossSearch" type="search" placeholder="Type a word, e.g. lag" data-i18n-ph="gl.ph" autocomplete="off">
+    <span class="small muted" id="glossCount"></span>
+  </div>
+  <dl class="gloss" id="gloss"></dl>
+</section>
+
+<!-- ============================ TECHNICAL DETAILS ============================ -->
+<section id="technical" class="sec" aria-labelledby="h-tech">
+  <div class="eyebrow" data-i18n="te.eyebrow">Technical details</div>
+  <h2 id="h-tech" data-i18n="te.h">For people who want to reproduce or extend it</h2>
+  <div class="toolbar"><button class="btn" id="expandAll" type="button" data-i18n="te.expand">Expand all</button><button class="btn" id="collapseAll" type="button" data-i18n="te.collapse">Collapse all</button></div>
+
+  <div class="tech">
+    <details open><summary data-i18n="te.s1">Data and validation split</summary>
+      <div data-i18n="te.b1"><div class="tw"><table class="kv"><tbody>
+        <tr><th>Training data</th><td>3,000,888 rows, 2013-01-01 to 2017-08-15 (1,684 days; Christmas Day is absent every year)</td></tr>
+        <tr><th>Rows used to fit</th><td>From 2015-01-01 onward (earlier years are not used)</td></tr>
+        <tr><th>Validation window</th><td>2017-07-31 to 2017-08-15 (16 days, 28,512 rows); models are fitted on days before it</td></tr>
+        <tr><th>Final fit</th><td>The chosen settings are refitted on all rows up to 2017-08-15 before forecasting</td></tr>
+        <tr><th>Forecast window</th><td>2017-08-16 to 2017-08-31 (16 days × 1,782 series = 28,512 rows)</td></tr>
+        <tr><th>Target and metric</th><td>Trained on log(1 + sales); scored with RMSLE (root mean squared error on that scale)</td></tr>
+      </tbody></table></div></div>
+    </details>
+    <details><summary data-i18n="te.s2">Features</summary>
+      <div data-i18n="te.b2"><ul class="plain">
+        <li><b>Identity:</b> store, product family, city, state, store type, store cluster</li>
+        <li><b>Promotion:</b> items on promotion, and its 7-day mean</li>
+        <li><b>Calendar:</b> weekday, day of month, month, year, day of year, payday (15th and month end), days to Christmas, the April 2016 earthquake period</li>
+        <li><b>Outside world:</b> oil price (missing days interpolated) and its 7-day mean; national, regional and local holidays</li>
+        <li><b>History (all shifted by at least 16 days):</b> sales 16, 17, 21, 28, 35 and 364 days earlier; rolling means over 7, 14, 28 and 56 days; 14-day rolling standard deviation</li>
+        <li><b>Not used:</b> the transactions file, because it does not cover the forecast days</li>
+      </ul>
+      <p class="small muted">In the s1/s2/d3 experiments the history columns are measured on a complete day grid and, for d3, from the last known day (lags of 7·⌈h/7⌉ days and up for forecast day h).</p></div>
+    </details>
+    <details><summary data-i18n="te.s3">Experiments (s0, s1, s2, d3)</summary>
+      <div data-i18n="te.b3"><div class="tw"><table class="kv"><tbody>
+        <tr><th>s0</th><td>Reference: history computed on a complete day grid (row-based shifts drift by a day around the missing Christmas Days)</td></tr>
+        <tr><th>s1</th><td>s0 + drop zeros recorded before a series first sells, both as training rows and as history inputs</td></tr>
+        <tr><th>s2</th><td>s1 + richer holiday features (additional days, bridge days, work days, events, days to and since a holiday)</td></tr>
+        <tr><th>d3</th><td>s2 + 16 separate models, one per forecast day, each using history from the last known day</td></tr>
+      </tbody></table></div></div>
+    </details>
+    <details><summary data-i18n="te.s4">Best settings per algorithm</summary>
+      <div data-i18n="te.b4"><div class="tw"><table class="kv"><tbody>
+        <tr><th>LightGBM</th><td><code>num_leaves=127, min_data_in_leaf=50, feature_fraction=0.95, bagging_fraction=0.8, lambda_l2=1, learning_rate=0.05</code> · 1,849 rounds</td></tr>
+        <tr><th>LightGBM per-horizon (d3)</th><td><code>learning_rate=0.08</code> · 600 rounds per model, other settings as the defaults above</td></tr>
+        <tr><th>XGBoost</th><td><code>max_depth=10, min_child_weight=100, subsample=0.8, colsample_bytree=0.8, reg_lambda=10, learning_rate=0.05</code> · 402 rounds · GPU</td></tr>
+        <tr><th>CatBoost</th><td><code>depth=8, l2_leaf_reg=3, learning_rate=0.05</code> · 2,077 rounds · GPU</td></tr>
+        <tr><th>Random Forest</th><td><code>n_estimators=250, min_samples_leaf=20, max_features=0.5, max_samples=0.7</code></td></tr>
+        <tr><th>LSTM</th><td>2 layers, hidden size 128, 56-day window, embeddings for store and family, AdamW with a one-cycle schedule (peak 2e-3), batch 2,048, 12 epochs, 2 seeds averaged · GPU. Not tuned.</td></tr>
+      </tbody></table></div>
+      <p class="small muted">Number of settings tried in the search: LightGBM 12, XGBoost 13, CatBoost 9, Random Forest 7 (explicit lists, not an exhaustive grid).</p></div>
+    </details>
+    <details><summary data-i18n="te.s5">Hardware, software and training time</summary>
+      <div data-i18n="te.b5"><div class="tw"><table class="kv"><tbody>
+        <tr><th>Machine</th><td>Windows 11, NVIDIA GeForce RTX 5070 (12 GB), CUDA 12.8</td></tr>
+        <tr><th>Packages</th><td>lightgbm 4.7.0, xgboost 3.4.1, catboost 1.2.10, pandas 3.1.1, numpy 2.5.5, scikit-learn 1.9.1, torch 2.11.0+cu128</td></tr>
+        <tr><th>Times (indicative)</th><td>LightGBM about 1–2 min per fit; XGBoost about 17 s on the GPU; CatBoost about 79 s on the GPU (first run); Random Forest about 67 s per 100 trees; LSTM about 21 s per epoch; the d3 set about 11 min; the full parameter search about 43 min</td></tr>
+      </tbody></table></div></div>
+    </details>
+    <details><summary data-i18n="te.s6">How to run</summary>
+      <div data-i18n="te.b6"><pre><code>uv venv .venv
+uv pip install --python .venv/Scripts/python.exe lightgbm xgboost catboost pandas numpy scikit-learn matplotlib seaborn nbformat nbconvert ipykernel
+uv pip install --python .venv/Scripts/python.exe "torch==2.11.*" --index-url https://download.pytorch.org/whl/cu128 --extra-index-url https://pypi.org/simple --index-strategy unsafe-best-match
+
+.venv/Scripts/python.exe lightgbm_v2.py s0 s1 s2 d3    # experiments (about 15 min)
+.venv/Scripts/python.exe tune_all.py                   # parameter search (about 40 min)
+.venv/Scripts/python.exe lstm_model.py                 # LSTM (needs a GPU)
+.venv/Scripts/python.exe ensemble_model.py             # XGBoost + CatBoost + LightGBM, old features
+.venv/Scripts/python.exe rf_model.py                   # Random Forest, old features</code></pre>
+      <p class="small muted">Commands are for Windows. The scripts and the notebook live in the project root; this website is the <code>site/</code> folder.</p></div>
+    </details>
+    <details><summary data-i18n="te.s7">Output files</summary>
+      <div data-i18n="te.b7"><ul class="plain">
+        <li><code>preds_&lt;name&gt;.npz</code>: arrays <code>val</code> (the 16 validation days) and <code>test</code> (the 16 forecast days), on the log(1 + sales) scale, ordered by store, family, date. Use <code>np.expm1</code> to get sales back.</li>
+        <li><code>ensemble_preds.npz</code>: predictions from <code>ensemble_model.py</code> plus the validation targets <code>y_val</code>.</li>
+        <li><code>best_params.json</code>: the best settings found for each algorithm.</li>
+        <li>The scripts no longer write submission files; convert <code>test</code> with <code>expm1</code> and pair it with <code>Dataset/test.csv</code> ids if you need one.</li>
+      </ul></div>
+    </details>
+    <details id="limits"><summary data-i18n="te.s8">Limitations</summary>
+      <div data-i18n="te.b8"><ul class="plain">
+        <li>All scores come from one 16-day validation window. There is no rolling-origin cross-validation yet, so small gaps (like 0.0001) are noise.</li>
+        <li>The best blend was chosen after looking at 11 combinations, so it may look slightly better than it truly is.</li>
+        <li>CatBoost on the GPU gives slightly different results between runs: 0.39941 in the search versus 0.39998 in the final fit. The tables use the final fit.</li>
+        <li>The LSTM was not tuned and uses the older feature set without the leading-zero trim, so it is not a like-for-like comparison with the tuned tree models.</li>
+        <li>The XGBoost, CatBoost and Random Forest "first run" rows use the older feature set; the "tuned" rows use the trimmed set.</li>
+        <li>Not tested on Linux or macOS, and there is no requirements or lock file; use the versions listed above.</li>
+      </ul></div>
+    </details>
+    <details><summary data-i18n="te.s9">All numbers</summary>
+      <div class="tw"><table id="tbl"></table></div>
+    </details>
+  </div>
+</section>
+
+<footer data-i18n="ft">Data: Kaggle Store Sales – Time Series Forecasting (Corporación Favorita). All scores are measured on the last 16 days of the training data; the real Kaggle score may differ slightly.</footer>
+</main>
+<div id="tip" role="tooltip"></div>
+<script src="assets/data.js"></script>
+<script src="assets/i18n.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>
