@@ -48,7 +48,8 @@ Then open http://localhost:3011
 ## Deploy on Dokploy (Docker Compose)
 
 Files used: `Dockerfile` (nginx:alpine serving the static files), `nginx.conf`, `docker-compose.yml` and `.dockerignore`.
-The image is small, has no database, and publishes no host ports; Dokploy's Traefik reaches it.
+The image is small and has no database. The compose file publishes port **3011** on the server, so the site opens at `http://<server-ip>:3011`
+(for example `http://192.168.1.12:3011`) without a domain.
 
 1. Put this folder in a Git repository (GitHub, GitLab, Gitea, ...) and push
 2. In Dokploy: **Create Service → Compose**
@@ -56,13 +57,15 @@ The image is small, has no database, and publishes no host ports; Dokploy's Trae
 4. **Compose Path**: `./docker-compose.yml` if `site/` is the root of the repository,
    or `./site/docker-compose.yml` if the repository is the whole project
 5. **Compose Type**: Docker Compose
-6. **Domains** tab → Add Domain: Service Name = `web`, Port = `3011`, enter your domain and enable HTTPS (Let's Encrypt)
-7. Click **Deploy**
+6. Click **Deploy**, then open `http://<server-ip>:3011`
+
+Optional: to serve it on a domain with HTTPS instead of IP:port, change `ports: ["3011:3011"]` to `expose: ["3011"]` in the compose file,
+then in the **Domains** tab add the domain with Service Name = `web`, Port = `3011` and enable HTTPS (Let's Encrypt).
 
 Notes
 - `docker-compose.yml` refers to the external network `dokploy-network`, which exists on a server where Dokploy is installed.
   On a machine without that network, use the commands below instead.
-- Do not add `ports:` or `container_name:` to the compose file (Dokploy manages these).
+- Do not add `container_name:` to the compose file (Dokploy manages names). Port 3011 must be free on the server; if something else uses it, change the left side of `3011:3011`.
 - To update the numbers, edit `assets/data.js` and push again (turn on Auto Deploy in Dokploy to redeploy on every push).
 
 Try the image locally (requires Docker):

@@ -1,13 +1,15 @@
-# Dokploy (Docker Compose type). Traefik routing is attached by Dokploy from the
-# Domains tab (service: web, port: 3011), so no host ports are published here.
+# Dokploy (Docker Compose type). Port 3011 is published on the server so the site opens at
+# http://<server-ip>:3011 (for example http://192.168.1.12:3011) with no domain needed.
+# To use a domain instead, replace `ports:` with `expose: ["3011"]` and add the domain in
+# the Domains tab (Service Name = web, Port = 3011).
 services:
   web:
     build:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
-    expose:
-      - "3011"
+    ports:
+      - "3011:3011"
     networks:
       - dokploy-network
     healthcheck:
